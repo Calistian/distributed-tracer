@@ -12,30 +12,51 @@ class ControllerException(Exception):
 
 
 def check_sysfs():
+    """
+    Checks if the sysfs directory is present
+    """
     if not isdir(pjoin(sysfs_base)):
         raise ControllerException('%s does not exist, is the kernel module loaded?' % sysfs_base)
 
 
 def xxx_pid(name, args):
+    """
+    Writes into the <name>_pid file a list of pids
+    :param name: The prefix of the file
+    :param args: The cmd line args
+    """
     pids = set(args.pids)
     pid_file_path = pjoin(sysfs_base, '%s_pid' % name)
     try:
         pid_file = open(pid_file_path, 'w')
         for pid in pids:
+            print(pid)
             pid_file.write(pid.strip())
+            pid_file.flush() # To write immediatly into the file without any buffering
     except OSError:
         raise ControllerException('Failed to open %s, do you have permission ?' % pid_file_path)
 
 
 def add_pid(args):
+    """
+    Adds a list of pids to the watchlist
+    :param args: Cmd line args
+    """
     xxx_pid('add', args)
 
 
 def remove_pid(args):
+    """
+    Removes a list of pids from the watchlist
+    :param args: Cmd line args
+    """
     xxx_pid('remove', args)
 
 
 def list_pid(_):
+    """
+    Lists the PIDs in the watchlist
+    """
     list_pid_file_path = pjoin(sysfs_base, 'list_pid')
     try:
         list_pid_file = open(list_pid_file_path, 'r')
@@ -45,6 +66,10 @@ def list_pid(_):
 
 
 def mod_probe(value):
+    """
+    Sets the value of the probe file
+    :param value: The value to set
+    """
     probe_file_path = pjoin(sysfs_base, 'probe')
     try:
         probe_file = open(probe_file_path, 'w')
@@ -54,10 +79,16 @@ def mod_probe(value):
 
 
 def set_probe(_):
+    """
+    Activates the probe
+    """
     mod_probe(1)
 
 
 def unset_probe(_):
+    """
+    Deactivates the probe
+    """
     mod_probe(0)
 
 
