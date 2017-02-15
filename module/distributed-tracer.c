@@ -51,7 +51,7 @@ static int init_pid_attr(void)
 	buf: The string
 	size: The size of the string
 
-	return: The PID, 0 if PID is invalid
+	return: The PID, 0 if string is invalid
 */
 static pid_t read_pid(const char* buf, size_t size)
 {
