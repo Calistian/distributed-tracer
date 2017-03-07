@@ -1,0 +1,22 @@
+#!/bin/bash
+
+if [ $(id -u) != "0" ]; then
+	echo "You must run this script as root" > /dev/stderr
+	exit 1
+fi
+
+pushd .
+
+CUR=$(dirname $(realpath $0))
+
+cd $CUR/module
+rmmod distributed_tracer
+make
+insmod distributed-tracer.ko
+
+cd $CUR/controller
+PID_LIST=$(ps aux | grep \\[nfsd\\] | grep -v grep | awk -F" " '{print $2}' | sed ':a;N;$!ba;s/\n/ /g')
+./distributed-tracer pid add $PID_LIST
+./distributed-tracer probe set
+
+popd
