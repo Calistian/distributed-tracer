@@ -10,22 +10,26 @@
 #define DT_PID_TABLE_SIZE 4
 #endif
 
-static inline bool __dt_pid_has_pid(pid_t pid);
-
-// Hashtable containing the PID to watch for, and also the R/W spinlock
+/*
+	Hashtable containing the PID to watch for, and also the R/W spinlock.
+	Read mostly because we do a lot more searching than modifying (hopefully).
+	Increasing refcount counts as searching.
+*/
 static DEFINE_READ_MOSTLY_HASHTABLE(dt_pid_table, DT_PID_TABLE_SIZE);
 static rwlock_t dt_pid_table_lock;
 
 /*
-	Entry in the PID hashtable, the key for the hashtable is pid
+	Entry in the PID hashtable, the key for the hashtable is pid.
 
 	pid: The pid
+	refcount: The reference count of the entry. At 0 the entry will be deleted
 	list: The list node in the hashtable
 
 */
 struct dt_pid_entry
 {
 	pid_t pid;
+	atomic_t refcount;
 	struct hlist_node list;
 };
 
@@ -110,7 +114,6 @@ static ssize_t dt_pid_add_pid_store(struct kobject* obj, struct kobj_attribute* 
 	pid_t* to_add;
 	size_t n;
 	size_t i;
-	struct dt_pid_entry* entry = NULL;
 
 	to_add = create_pid_list(buf, size, &n);
 	if(unlikely(!to_add))
@@ -119,18 +122,10 @@ static ssize_t dt_pid_add_pid_store(struct kobject* obj, struct kobj_attribute* 
 		return -EINVAL;
 	}
 
-	write_lock(&dt_pid_table_lock);
 	for(i = 0; i < n; i++)
 	{
-		// Check if PID is there
-		if(likely(!__dt_pid_has_pid(to_add[i])))
-		{
-			entry = kmalloc(sizeof(struct dt_pid_entry), GFP_KERNEL);
-			entry->pid = to_add[i];
-			hash_add(dt_pid_table, &entry->list, entry->pid);
-		}
+		dt_pid_ref(to_add[i]);
 	}
-	write_unlock(&dt_pid_table_lock);
 	kfree(to_add);
 	return size;
 }
@@ -141,8 +136,6 @@ static ssize_t dt_pid_remove_pid_store(struct kobject* obj, struct kobj_attribut
 	pid_t* to_remove;
 	size_t n;
 	size_t i;
-	struct dt_pid_entry* entry;
-	struct hlist_node* tmp;
 
 	to_remove = create_pid_list(buf, size, &n);
 	if(unlikely(!to_remove))
@@ -151,20 +144,11 @@ static ssize_t dt_pid_remove_pid_store(struct kobject* obj, struct kobj_attribut
 		return -EINVAL;
 	}
 
-	write_lock(&dt_pid_table_lock);
 	for(i = 0; i < n; i++)
 	{
-		hash_for_each_possible_safe(dt_pid_table, entry, tmp, list, to_remove[i])
-		{
-			if(entry->pid == to_remove[i])
-			{
-				hash_del(&entry->list);
-				kfree(entry);
-			}
-
-		}
+		dt_pid_unref(to_remove[i]);
 	}
-	write_unlock(&dt_pid_table_lock);
+
 	kfree(to_remove);
 	return size;
 }
@@ -210,28 +194,105 @@ void dt_pid_exit(void)
 	}
 }
 
-// No-lock version of dt_pid_has_pid, use it from an already locked pid table
-static inline bool __dt_pid_has_pid(pid_t pid)
+static struct dt_pid_entry* __dt_pid_get_entry(pid_t pid)
 {
-	bool ret = false;
 	struct dt_pid_entry* entry;
+	
 	hash_for_each_possible(dt_pid_table, entry, list, pid)
 	{
 		if(entry->pid == pid)
-		{
-			ret = true;
-			break;
-		}
-	};
-	return ret;
+			return entry;
+	}
+	return NULL;
 }
 
-bool dt_pid_has_pid(pid_t pid)
+static inline int __dt_pid_ref_entry(struct dt_pid_entry* entry)
 {
-	int ret;
-	// Acquire the lock and use the non-lock version
+	atomic_inc(&entry->refcount);
+	return atomic_read(&entry->refcount);
+}
+
+static inline int __dt_pid_unref_entry(struct dt_pid_entry* entry)
+{
+	atomic_dec(&entry->refcount);
+	if(atomic_read(&entry->refcount) == 0)
+	{
+		hash_del(&entry->list);
+		kfree(entry);
+		return 0;
+	}
+	return atomic_read(&entry->refcount);
+}
+
+static struct dt_pid_entry* __dt_pid_add_entry(pid_t pid)
+{
+	struct dt_pid_entry* entry;
+
+	entry = __dt_pid_get_entry(pid);
+	if(entry)
+	{
+		__dt_pid_ref_entry(entry);
+	}
+	else
+	{
+		entry = kmalloc(sizeof(struct dt_pid_entry), GFP_KERNEL);
+		entry->pid = pid;
+		atomic_set(&entry->refcount, 1);
+		hash_add(dt_pid_table, &entry->list, entry->pid);
+	}
+	return entry;
+}
+
+int dt_pid_ref(pid_t pid)
+{
+	struct dt_pid_entry* entry;
+	int refcount = 0;
+
 	read_lock(&dt_pid_table_lock);
-	ret = __dt_pid_has_pid(pid);
+	entry = __dt_pid_get_entry(pid);
+	if(entry)
+	{
+		refcount = __dt_pid_ref_entry(entry);
+	}
 	read_unlock(&dt_pid_table_lock);
-	return ret;
+
+	if(!entry)
+	{
+		write_lock(&dt_pid_table_lock);
+		entry = __dt_pid_add_entry(pid);
+		refcount = atomic_read(&entry->refcount);
+		write_unlock(&dt_pid_table_lock);
+	}
+
+	return refcount;
+}
+
+int dt_pid_unref(pid_t pid)
+{
+	struct dt_pid_entry* entry;
+	int refcount;
+
+	write_lock(&dt_pid_table_lock);
+	entry = __dt_pid_get_entry(pid);
+	if(entry)
+	{
+		refcount = __dt_pid_unref_entry(entry);
+	}
+	write_unlock(&dt_pid_table_lock);
+
+	return refcount;
+}
+
+int dt_pid_refcount(pid_t pid)
+{
+	struct dt_pid_entry* entry;
+	int refcount = 0;
+
+	read_lock(&dt_pid_table_lock);
+	entry = __dt_pid_get_entry(pid);
+	if(entry)
+		refcount = atomic_read(&entry->refcount);
+	read_unlock(&dt_pid_table_lock);
+
+	return refcount;
 }
