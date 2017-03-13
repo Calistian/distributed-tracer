@@ -178,6 +178,7 @@ struct kobj_attribute dt_pid_list_pid_attr = __ATTR(list_pid, 0444, dt_pid_list_
 
 int dt_pid_init(void)
 {
+	rwlock_init(&dt_pid_table_lock);
 	hash_init(dt_pid_table);
 	return 0;
 }

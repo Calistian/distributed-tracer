@@ -1,4 +1,7 @@
 #include <linux/kprobes.h>
+#include <linux/hashtable.h>
+#include <linux/slab.h>
+#include <linux/pid.h>
 
 #include <net/ip.h>
 #include <net/tcp.h>
@@ -7,23 +10,42 @@
 #include "dt_probe.h"
 #include "dt_pid.h"
 
+#ifndef DT_PROBE_SK_BUFF_TABLE_SIZE
+#define DT_PROBE_SK_BUFF_TABLE_SIZE 8
+#endif
+
 /*
 	Creates a jprobe from the probed function.
-	The jprobe will be called <fn>_probe and the entry function must be called <fn>_probe_fn
+	The jprobe will be called <fn>_jprobe and the entry function must be called <fn>_jprobe_fn
 */
-#define DT_DECL_JPROBE(fn) static struct jprobe fn##_probe = {\
-	.entry = fn##_probe_fn,\
+#define DT_DECL_JPROBE(fn) static struct jprobe fn##_jprobe = {\
+	.entry = fn##_jprobe_fn,\
 	.kp = {\
 		.symbol_name = #fn\
 	}\
 }
 
-static int ip_queue_xmit_probe_fn(struct sock* sk, struct sk_buff* skb, struct flowi* fl)
+#define DT_DECL_KRETPROBE(fn) static struct kretprobe fn##_kretprobe = {\
+	.handler = fn##_kretprobe_fn,\
+	.kp = {\
+		.symbol_name = #fn\
+	}\
+}
+
+struct dt_probe_cache_entry
+{
+	struct sock* sk;
+	struct msghdr* msg;
+	pid_t pid;
+	struct hlist_node list;
+};
+
+static int ip_queue_xmit_jprobe_fn(struct sock* sk, struct sk_buff* skb, struct flowi* fl)
 {
 	struct tcphdr* th;
 	struct task_struct* task = current;
 
-	// Do something only if the calling PID is being watched
+	// Do something only if the calling PID is being watched and the packet is TCP.
 	if(sk->sk_type == SOCK_STREAM && task && dt_pid_has_pid(task->pid))
 	{
 		th = (struct tcphdr*)skb->data;
@@ -36,7 +58,7 @@ static int ip_queue_xmit_probe_fn(struct sock* sk, struct sk_buff* skb, struct f
 	return 0;
 }
 
-static int tcp_v4_do_rcv_probe_fn(struct sock* sk, struct sk_buff* skb)
+static int tcp_v4_do_rcv_jprobe_fn(struct sock* sk, struct sk_buff* skb)
 {
 	jprobe_return();
 	return 0;
@@ -55,17 +77,19 @@ static int dt_probe_register(void)
 	value = atomic_xchg(&registered, value);
 	if(value == 0)
 	{
-		err = register_jprobe(&ip_queue_xmit_probe);
+		err = register_jprobe(&ip_queue_xmit_jprobe);
 		if(err < 0)
 		{
-			printk(DT_PRINTK_ERR "Failed to register ip_queue_xmit probe");
+			printk(DT_PRINTK_ERR "Failed to register ip_queue_xmit jprobe");
+			atomic_set(&registered, 0);
 			return err;
 		}
-		err = register_jprobe(&tcp_v4_do_rcv_probe);
-		if (err < 0)
+		err = register_jprobe(&tcp_v4_do_rcv_jprobe);
+		if(err < 0)
 		{
-			unregister_jprobe(&ip_queue_xmit_probe);
-			printk(DT_PRINTK_ERR "Failed to register tcp_v4_do_rcv probe");
+			unregister_jprobe(&ip_queue_xmit_jprobe);
+			printk(DT_PRINTK_ERR "Failed to register tcp_v4_do_rcv jprobe");
+			atomic_set(&registered, 0);
 			return err;
 		}
 	}
@@ -74,13 +98,13 @@ static int dt_probe_register(void)
 
 static int dt_probe_unregister(void)
 {
-	printk(DT_PRINTK_ERR "Unregister %d", atomic_read(&registered));
 	if(atomic_read(&registered) == 1)
 	{
-		unregister_jprobe(&tcp_v4_do_rcv_probe);
-		unregister_jprobe(&ip_queue_xmit_probe);
+		unregister_jprobe(&tcp_v4_do_rcv_jprobe);
+		unregister_jprobe(&ip_queue_xmit_jprobe);
 		atomic_set(&registered, 0);
 	}
+
 	return 0;
 }
 
@@ -115,6 +139,8 @@ struct kobj_attribute dt_probe_probe_attr = __ATTR(probe, 0664, dt_probe_probe_s
 
 int dt_probe_init(void)
 {
+
+	printk(DT_PRINTK_WARN "==================================================================");
 	return 0;
 }
 
