@@ -15,7 +15,7 @@ make
 insmod distributed-tracer.ko
 
 cd $CUR/controller
-PID_LIST=$(ps aux | grep -E "\\[(nfsd|nfsd4_callbacks)\\]" | grep -v grep | awk -F" " '{print $2}' | sed ':a;N;$!ba;s/\n/ /g')
+PID_LIST=$(ps aux | grep -E "http\\.server" | grep -v grep | awk -F" " '{print $2}' | sed ':a;N;$!ba;s/\n/ /g')
 ./distributed-tracer pid add $PID_LIST
 ./distributed-tracer probe set
 
