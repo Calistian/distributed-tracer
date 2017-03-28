@@ -168,12 +168,13 @@ uint16_t dt_pid_unref(pid_t pid)
 
 bool dt_pid_has_pid(pid_t pid)
 {
-	struct dt_pid_entry* entry;
 	bool res;
 
 	read_lock(&dt_pid_table_lock);
-	entry = __dt_pid_get_entry(pid);
-	res = entry->refcount != 0 || entry->always_active;
+	if(__dt_pid_get_entry(pid))
+		res = true;
+	else
+		res = false;
 	read_unlock(&dt_pid_table_lock);
 
 	return res;

@@ -2,6 +2,7 @@
 #include <linux/hashtable.h>
 #include <linux/slab.h>
 #include <linux/pid.h>
+#include <linux/sched.h>
 
 #include <net/ip.h>
 #include <net/tcp.h>
@@ -32,7 +33,8 @@
 	}\
 }
 
-#define DT_DECL_KRETPROBE(fn) static struct kretprobe fn##_kretprobe = {\
+#define DT_DECL_KRETPROBE_WITH_ENTRY(fn) static struct kretprobe fn##_kretprobe = {\
+	.entry_handler = fn##_kretprobe_entry_fn,\
 	.handler = fn##_kretprobe_fn,\
 	.kp = {\
 		.symbol_name = #fn\
@@ -61,10 +63,10 @@ struct dt_probe_mark_entry
 static int ip_queue_xmit_jprobe_fn(struct sock* sk, struct sk_buff* skb, struct flowi* fl)
 {
 	struct tcphdr* th;
-	struct task_struct* task = current;
+	pid_t curpid = current->pid;
 
 	// Do something only if the calling PID is being watched and the packet is TCP. Only mark data packets (PSH)
-	if(sk->sk_type == SOCK_STREAM && dt_pid_has_pid(task->pid))
+	if(sk->sk_type == SOCK_STREAM && dt_pid_has_pid(curpid))
 	{
 		th = tcp_hdr(skb);
 		if(th->psh)
@@ -72,6 +74,8 @@ static int ip_queue_xmit_jprobe_fn(struct sock* sk, struct sk_buff* skb, struct 
 			// Flip the first reserved bit in the TCP header and update checksum accordingly
 			th->res1 |= (1 << 3);
 			th->check ^= (1 << 3);
+
+			dt_pid_unref(curpid);
 		}
 	}
 
@@ -87,7 +91,7 @@ static int tcp_v4_do_rcv_jprobe_fn(struct sock* sk, struct sk_buff* skb)
 	th = tcp_hdr(skb);
 
 	if(th->psh && (th->res1 & (1 << 3)))
-	{
+	{	
 		// Re-flip the first reserved bit and restore checksum
 		th->res1 &= ~(1 << 3);
 		th->check ^= (1 << 3);
@@ -105,7 +109,7 @@ static int tcp_v4_do_rcv_jprobe_fn(struct sock* sk, struct sk_buff* skb)
 	return 0;
 }
 
-static int tcp_recvmsg_jprobe_fn(struct sock* sk, struct msghdr* msg, size_t len, int nonblock, int flags, int* addr_len)
+static int tcp_recvmsg_kretprobe_entry_fn(struct kretprobe_instance* inst, struct pt_regs* regs)
 {
 	struct dt_probe_tcp_recvmsg_cache_entry* entry;
 
@@ -113,11 +117,12 @@ static int tcp_recvmsg_jprobe_fn(struct sock* sk, struct msghdr* msg, size_t len
 	entry->pid = current->pid;
 	entry->marked = false;
 
+	printk(DT_PRINTK_INFO "Entry %d", entry->pid);
+
 	spin_lock(&dt_probe_tcp_recvmsg_cache_table_lock);
 	hash_add(dt_probe_tcp_recvmsg_cache_table, &entry->list, entry->pid);
 	spin_unlock(&dt_probe_tcp_recvmsg_cache_table_lock);
 
-	jprobe_return();
 	return 0;
 }
 
@@ -127,13 +132,18 @@ static int tcp_recvmsg_kretprobe_fn(struct kretprobe_instance* inst, struct pt_r
 	struct hlist_node* tmp;
 	pid_t curpid = current->pid;
 
+	printk(DT_PRINTK_INFO "Exit %d", curpid);
+
 	spin_lock(&dt_probe_tcp_recvmsg_cache_table_lock);
 	hash_for_each_possible_safe(dt_probe_tcp_recvmsg_cache_table, entry, tmp, list, curpid)
 	{
 		if(entry->pid == curpid)
 		{
 			if(entry->marked)
+			{
 				printk(DT_PRINTK_INFO "Found marked packet for %d", curpid);
+				dt_pid_ref(curpid);
+			}
 			hash_del(&entry->list);
 			kmem_cache_free(dt_probe_tcp_recvmsg_cache_alloc, entry);
 		}
@@ -156,17 +166,20 @@ static int skb_copy_datagram_iter_jprobe_fn(const struct sk_buff* skb, int offse
 	{
 		if(unlikely(mark_entry->skb == skb))
 		{
+			printk(DT_PRINTK_INFO "skb %d", curpid);
 			spin_lock(&dt_probe_tcp_recvmsg_cache_table_lock);
 			hash_for_each_possible(dt_probe_tcp_recvmsg_cache_table, cache_entry, list, curpid)
 			{
 				if(cache_entry->pid == curpid)
 				{
 					cache_entry->marked = true;
+					break;
 				}
 			}
 			spin_unlock(&dt_probe_tcp_recvmsg_cache_table_lock);
 			hash_del(&mark_entry->list);
 			kmem_cache_free(dt_probe_mark_alloc, mark_entry);
+			break;
 		}
 	}
 	spin_unlock(&dt_probe_mark_table_lock);
@@ -178,8 +191,7 @@ static int skb_copy_datagram_iter_jprobe_fn(const struct sk_buff* skb, int offse
 
 DT_DECL_JPROBE(ip_queue_xmit);
 DT_DECL_JPROBE(tcp_v4_do_rcv);
-DT_DECL_JPROBE(tcp_recvmsg);
-DT_DECL_KRETPROBE(tcp_recvmsg);
+DT_DECL_KRETPROBE_WITH_ENTRY(tcp_recvmsg);
 DT_DECL_JPROBE(skb_copy_datagram_iter);
 
 static atomic_t registered = ATOMIC_INIT(0);
@@ -204,12 +216,6 @@ static int dt_probe_register(void)
 			printk(DT_PRINTK_ERR "Failed to register tcp_v4_do_rcv jprobe");
 			goto on_err;
 		}
-		err = register_jprobe(&tcp_recvmsg_jprobe);
-		if(err < 0)
-		{
-			printk(DT_PRINTK_ERR "Failed to register tcp_recvmsg jprobe");
-			goto on_err;
-		}
 		err = register_kretprobe(&tcp_recvmsg_kretprobe);
 		if(err < 0)
 		{
@@ -228,7 +234,6 @@ static int dt_probe_register(void)
 on_err:
 	unregister_jprobe(&skb_copy_datagram_iter_jprobe);
 	unregister_kretprobe(&tcp_recvmsg_kretprobe);
-	unregister_jprobe(&tcp_recvmsg_jprobe);
 	unregister_jprobe(&tcp_v4_do_rcv_jprobe);
 	unregister_jprobe(&ip_queue_xmit_jprobe);
 	atomic_set(&registered, 0);
@@ -241,7 +246,6 @@ static int dt_probe_unregister(void)
 	{
 		unregister_jprobe(&skb_copy_datagram_iter_jprobe);
 		unregister_kretprobe(&tcp_recvmsg_kretprobe);
-		unregister_jprobe(&tcp_recvmsg_jprobe);
 		unregister_jprobe(&tcp_v4_do_rcv_jprobe);
 		unregister_jprobe(&ip_queue_xmit_jprobe);
 		atomic_set(&registered, 0);
