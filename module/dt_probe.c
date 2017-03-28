@@ -151,28 +151,25 @@ static int skb_copy_datagram_iter_jprobe_fn(const struct sk_buff* skb, int offse
 
 	pid_t curpid = current->pid;
 
-	spin_lock(&dt_probe_tcp_recvmsg_cache_table_lock);
-	hash_for_each_possible(dt_probe_tcp_recvmsg_cache_table, cache_entry, list, curpid)
+	spin_lock(&dt_probe_mark_table_lock);
+	hash_for_each_possible_safe(dt_probe_mark_table, mark_entry, mark_tmp, list, (uint64_t)skb)
 	{
-		if(cache_entry->pid == curpid)
+		if(unlikely(mark_entry->skb == skb))
 		{
-			if(!cache_entry->marked)
+			spin_lock(&dt_probe_tcp_recvmsg_cache_table_lock);
+			hash_for_each_possible(dt_probe_tcp_recvmsg_cache_table, cache_entry, list, curpid)
 			{
-				spin_lock(&dt_probe_mark_table_lock);
-				hash_for_each_possible_safe(dt_probe_mark_table, mark_entry, mark_tmp, list, (uint64_t)skb)
+				if(cache_entry->pid == curpid)
 				{
-					if(skb == mark_entry->skb)
-					{
-						hash_del(&mark_entry->list);
-						kmem_cache_free(dt_probe_mark_alloc, mark_entry);
-						cache_entry->marked = true;
-					}
+					cache_entry->marked = true;
 				}
-				spin_unlock(&dt_probe_mark_table_lock);
 			}
+			spin_unlock(&dt_probe_tcp_recvmsg_cache_table_lock);
+			hash_del(&mark_entry->list);
+			kmem_cache_free(dt_probe_mark_alloc, mark_entry);
 		}
 	}
-	spin_unlock(&dt_probe_tcp_recvmsg_cache_table_lock);
+	spin_unlock(&dt_probe_mark_table_lock);
 
 	jprobe_return();
 	return 0;
