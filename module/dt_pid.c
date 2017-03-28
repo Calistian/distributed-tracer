@@ -29,9 +29,155 @@ static rwlock_t dt_pid_table_lock;
 struct dt_pid_entry
 {
 	pid_t pid;
-	atomic_t refcount;
+	uint16_t refcount;
+	bool always_active;
 	struct hlist_node list;
 };
+
+static struct dt_pid_entry* __dt_pid_get_entry(pid_t pid)
+{
+	struct dt_pid_entry* entry;
+	hash_for_each_possible(dt_pid_table, entry, list, pid)
+	{
+		if(entry->pid == pid)
+			return entry;
+	}
+	return NULL;
+}
+
+static uint16_t __dt_pid_do_ref(struct dt_pid_entry* entry)
+{
+	return ++entry->refcount;
+}
+
+static uint16_t __dt_pid_do_unref(struct dt_pid_entry* entry)
+{
+	if(entry->refcount > 0)
+		--entry->refcount;
+	return entry->refcount;
+}
+
+static struct dt_pid_entry* __dt_pid_add(pid_t pid, bool always_active)
+{
+	struct dt_pid_entry* entry;
+
+	entry = kmalloc(sizeof(struct dt_pid_entry), GFP_KERNEL);
+	if(unlikely(!entry))
+		return NULL;
+
+	entry->pid = pid;
+	entry->always_active = always_active;
+	entry->refcount = 0;
+	if(!always_active)
+		__dt_pid_do_ref(entry);
+	hash_add(dt_pid_table, &entry->list, pid);
+
+	return entry;
+}
+
+static void __dt_pid_remove(struct dt_pid_entry* entry)
+{
+	hlist_del(&entry->list);
+	kfree(entry);
+}
+
+static uint16_t dt_pid_do_ref(pid_t pid, bool always_active)
+{
+	struct dt_pid_entry* entry;
+	uint16_t res;
+
+	read_lock(&dt_pid_table_lock);
+	entry = __dt_pid_get_entry(pid);
+	if(entry)
+	{
+		if(always_active)
+		{
+			entry->always_active = true;
+			res = entry->refcount;
+		}
+		else
+			res = __dt_pid_do_ref(entry);
+	}
+	read_unlock(&dt_pid_table_lock);
+
+	if(!entry)
+	{
+		write_lock(&dt_pid_table_lock);
+		entry = __dt_pid_add(pid, always_active);
+		if(unlikely(!entry))
+			res = 0;
+		else
+			res = entry->refcount;
+		write_unlock(&dt_pid_table_lock);
+	}
+
+	return res;
+}
+
+static uint16_t dt_pid_deactivate(pid_t pid)
+{
+	struct dt_pid_entry* entry;
+	uint16_t res;
+
+	write_lock(&dt_pid_table_lock);
+	entry = __dt_pid_get_entry(pid);
+	if(entry && entry->always_active)
+	{
+		entry->always_active = false;
+		if(entry->refcount == 0)
+		{
+			__dt_pid_remove(entry);
+			res = 0;
+		}
+		else
+			res = entry->refcount;
+	}
+	write_unlock(&dt_pid_table_lock);
+
+	return res;
+}
+
+uint16_t dt_pid_ref(pid_t pid)
+{
+	return dt_pid_do_ref(pid, false);
+}
+
+uint16_t dt_pid_unref(pid_t pid)
+{
+	struct dt_pid_entry* entry;
+	uint16_t res;
+
+	write_lock(&dt_pid_table_lock);
+	entry = __dt_pid_get_entry(pid);
+	if(entry)
+	{
+		if(__dt_pid_do_unref(entry) == 0 && !entry->always_active)
+		{
+			__dt_pid_remove(entry);
+			res = 0;
+		}
+		else
+			res = entry->refcount;
+	}
+	else
+		res = 0;
+	write_unlock(&dt_pid_table_lock);
+
+	return res;
+}
+
+bool dt_pid_has_pid(pid_t pid)
+{
+	struct dt_pid_entry* entry;
+	bool res;
+
+	read_lock(&dt_pid_table_lock);
+	entry = __dt_pid_get_entry(pid);
+	res = entry->refcount != 0 || entry->always_active;
+	read_unlock(&dt_pid_table_lock);
+
+	return res;
+}
 
 /*
 	Creates a list of PIDs from a space-separated string,
@@ -124,7 +270,7 @@ static ssize_t dt_pid_add_pid_store(struct kobject* obj, struct kobj_attribute* 
 
 	for(i = 0; i < n; i++)
 	{
-		dt_pid_ref(to_add[i]);
+		dt_pid_do_ref(to_add[i], true);
 	}
 	kfree(to_add);
 	return size;
@@ -146,7 +292,7 @@ static ssize_t dt_pid_remove_pid_store(struct kobject* obj, struct kobj_attribut
 
 	for(i = 0; i < n; i++)
 	{
-		dt_pid_unref(to_remove[i]);
+		dt_pid_deactivate(to_remove[i]);
 	}
 
 	kfree(to_remove);
@@ -163,7 +309,7 @@ static ssize_t dt_pid_list_pid_show(struct kobject* obj, struct kobj_attribute* 
 	read_lock(&dt_pid_table_lock);
 	hash_for_each(dt_pid_table, bkt, entry, list)
 	{
-		written += snprintf(buf + written, PAGE_SIZE - written, "%d ", entry->pid);
+		written += snprintf(buf + written, PAGE_SIZE - written, "%d %u (%c)\n", entry->pid, entry->refcount, entry->always_active ? 'A' : 'N');
 		if(written >= PAGE_SIZE)
 			break;
 	}
@@ -193,107 +339,4 @@ void dt_pid_exit(void)
 		hash_del(&entry->list);
 		kfree(entry);
 	}
-}
-
-static struct dt_pid_entry* __dt_pid_get_entry(pid_t pid)
-{
-	struct dt_pid_entry* entry;
-	
-	hash_for_each_possible(dt_pid_table, entry, list, pid)
-	{
-		if(entry->pid == pid)
-			return entry;
-	}
-	return NULL;
-}
-
-static inline int __dt_pid_ref_entry(struct dt_pid_entry* entry)
-{
-	atomic_inc(&entry->refcount);
-	return atomic_read(&entry->refcount);
-}
-
-static inline int __dt_pid_unref_entry(struct dt_pid_entry* entry)
-{
-	atomic_dec(&entry->refcount);
-	if(atomic_read(&entry->refcount) == 0)
-	{
-		hash_del(&entry->list);
-		kfree(entry);
-		return 0;
-	}
-	return atomic_read(&entry->refcount);
-}
-
-static struct dt_pid_entry* __dt_pid_add_entry(pid_t pid)
-{
-	struct dt_pid_entry* entry;
-
-	entry = __dt_pid_get_entry(pid);
-	if(entry)
-	{
-		__dt_pid_ref_entry(entry);
-	}
-	else
-	{
-		entry = kmalloc(sizeof(struct dt_pid_entry), GFP_KERNEL);
-		entry->pid = pid;
-		atomic_set(&entry->refcount, 1);
-		hash_add(dt_pid_table, &entry->list, entry->pid);
-	}
-	return entry;
-}
-
-int dt_pid_ref(pid_t pid)
-{
-	struct dt_pid_entry* entry;
-	int refcount = 0;
-
-	read_lock(&dt_pid_table_lock);
-	entry = __dt_pid_get_entry(pid);
-	if(entry)
-	{
-		refcount = __dt_pid_ref_entry(entry);
-	}
-	read_unlock(&dt_pid_table_lock);
-
-	if(!entry)
-	{
-		write_lock(&dt_pid_table_lock);
-		entry = __dt_pid_add_entry(pid);
-		refcount = atomic_read(&entry->refcount);
-		write_unlock(&dt_pid_table_lock);
-	}
-
-	return refcount;
-}
-
-int dt_pid_unref(pid_t pid)
-{
-	struct dt_pid_entry* entry;
-	int refcount;
-
-	write_lock(&dt_pid_table_lock);
-	entry = __dt_pid_get_entry(pid);
-	if(entry)
-	{
-		refcount = __dt_pid_unref_entry(entry);
-	}
-	write_unlock(&dt_pid_table_lock);
-
-	return refcount;
-}
-
-int dt_pid_refcount(pid_t pid)
-{
-	struct dt_pid_entry* entry;
-	int refcount = 0;
-
-	read_lock(&dt_pid_table_lock);
-	entry = __dt_pid_get_entry(pid);
-	if(entry)
-		refcount = atomic_read(&entry->refcount);
-	read_unlock(&dt_pid_table_lock);
-
-	return refcount;
 }

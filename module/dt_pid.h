@@ -20,7 +20,7 @@ void dt_pid_exit(void);
 
 	return: The number of refcounts, -1 for an always activated pid
 */
-int dt_pid_ref(pid_t pid);
+uint16_t dt_pid_ref(pid_t pid);
 
 /*
 	Decreases the refcount of a PID,
@@ -31,16 +31,7 @@ int dt_pid_ref(pid_t pid);
 
 	return: The number of refs, 0 if removed / not in the table, -1 if always active
 */
-int dt_pid_unref(pid_t pid);
-
-/*
-	Returns the reference count of a PID.
-
-	pid: The pid to check
-
-	return: The number of references, 0 if not in the table, -1 if always active
-*/
-int dt_pid_refcount(pid_t pid);
+uint16_t dt_pid_unref(pid_t pid);
 
 /*
 	Checks if the PID is in the table.
@@ -49,9 +40,6 @@ int dt_pid_refcount(pid_t pid);
 
 	return: true if the pid is in the table.
 */
-static inline bool dt_pid_has_pid(pid_t pid)
-{
-	return dt_pid_refcount(pid) != 0;
-}
+bool dt_pid_has_pid(pid_t pid);
 
 #endif
