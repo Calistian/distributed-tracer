@@ -1,5 +1,6 @@
 obj-m += distributed-tracer.o
 distributed-tracer-objs += dt.o
+distributed-tracer-objs += dt_filter.o
 distributed-tracer-objs += dt_pid.o
 distributed-tracer-objs += dt_probe.o
 distributed-tracer-objs += dt_sysfs.o

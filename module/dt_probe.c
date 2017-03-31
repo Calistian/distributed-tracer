@@ -9,7 +9,6 @@
 
 #include "dt.h"
 #include "dt_probe.h"
-#include "dt_pid.h"
 
 #ifndef DT_PROBE_TCP_RECVMSG_CACHE_TABLE_SIZE
 #define DT_PROBE_TCP_RECVMSG_CACHE_TABLE_SIZE 8
@@ -66,7 +65,7 @@ static int ip_queue_xmit_jprobe_fn(struct sock* sk, struct sk_buff* skb, struct 
 	pid_t curpid = current->pid;
 
 	// Do something only if the calling PID is being watched and the packet is TCP. Only mark data packets (PSH)
-	if(sk->sk_type == SOCK_STREAM && dt_pid_has_pid(curpid))
+	if(sk->sk_type == SOCK_STREAM)
 	{
 		th = tcp_hdr(skb);
 		if(th->psh)
@@ -74,8 +73,6 @@ static int ip_queue_xmit_jprobe_fn(struct sock* sk, struct sk_buff* skb, struct 
 			// Flip the first reserved bit in the TCP header and update checksum accordingly
 			th->res1 |= (1 << 3);
 			th->check ^= (1 << 3);
-
-			dt_pid_unref(curpid);
 		}
 	}
 
@@ -142,7 +139,6 @@ static int tcp_recvmsg_kretprobe_fn(struct kretprobe_instance* inst, struct pt_r
 			if(entry->marked)
 			{
 				printk(DT_PRINTK_INFO "Found marked packet for %d", curpid);
-				dt_pid_ref(curpid);
 			}
 			hash_del(&entry->list);
 			kmem_cache_free(dt_probe_tcp_recvmsg_cache_alloc, entry);

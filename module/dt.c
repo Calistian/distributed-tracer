@@ -4,6 +4,7 @@
 #include <linux/kernel.h>
 
 #include "dt.h"
+#include "dt_filter.h"
 #include "dt_pid.h"
 #include "dt_probe.h"
 #include "dt_sysfs.h"
@@ -23,6 +24,12 @@ static struct dt_sysfs_attrs dt_sysfs_attrs = {
 static int __init dt_init(void)
 {
 	int ret = 0;
+	ret = dt_filter_init();
+	if(ret < 0)
+	{
+		printk(DT_PRINTK_ERR "Could not initialize filter");
+		return ret;
+	}
 	ret = dt_pid_init();
 	if(ret < 0)
 	{
