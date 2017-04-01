@@ -1,3 +1,4 @@
+#include <linux/kobject.h>
 #include <linux/kprobes.h>
 #include <linux/hashtable.h>
 #include <linux/slab.h>
@@ -9,6 +10,8 @@
 
 #include "dt.h"
 #include "dt_probe.h"
+#include "dt_proc.h"
+#include "dt_sysfs.h"
 
 #ifndef DT_PROBE_TCP_RECVMSG_CACHE_TABLE_SIZE
 #define DT_PROBE_TCP_RECVMSG_CACHE_TABLE_SIZE 8
@@ -62,10 +65,9 @@ struct dt_probe_mark_entry
 static int ip_queue_xmit_jprobe_fn(struct sock* sk, struct sk_buff* skb, struct flowi* fl)
 {
 	struct tcphdr* th;
-	pid_t curpid = current->pid;
 
 	// Do something only if the calling PID is being watched and the packet is TCP. Only mark data packets (PSH)
-	if(sk->sk_type == SOCK_STREAM)
+	if(sk->sk_type == SOCK_STREAM && dt_proc_has_current())
 	{
 		th = tcp_hdr(skb);
 		if(th->psh)
@@ -114,8 +116,6 @@ static int tcp_recvmsg_kretprobe_entry_fn(struct kretprobe_instance* inst, struc
 	entry->pid = current->pid;
 	entry->marked = false;
 
-	printk(DT_PRINTK_INFO "Entry %d", entry->pid);
-
 	spin_lock(&dt_probe_tcp_recvmsg_cache_table_lock);
 	hash_add(dt_probe_tcp_recvmsg_cache_table, &entry->list, entry->pid);
 	spin_unlock(&dt_probe_tcp_recvmsg_cache_table_lock);
@@ -128,8 +128,6 @@ static int tcp_recvmsg_kretprobe_fn(struct kretprobe_instance* inst, struct pt_r
 	struct dt_probe_tcp_recvmsg_cache_entry* entry;
 	struct hlist_node* tmp;
 	pid_t curpid = current->pid;
-
-	printk(DT_PRINTK_INFO "Exit %d", curpid);
 
 	spin_lock(&dt_probe_tcp_recvmsg_cache_table_lock);
 	hash_for_each_possible_safe(dt_probe_tcp_recvmsg_cache_table, entry, tmp, list, curpid)
@@ -162,7 +160,6 @@ static int skb_copy_datagram_iter_jprobe_fn(const struct sk_buff* skb, int offse
 	{
 		if(unlikely(mark_entry->skb == skb))
 		{
-			printk(DT_PRINTK_INFO "skb %d", curpid);
 			spin_lock(&dt_probe_tcp_recvmsg_cache_table_lock);
 			hash_for_each_possible(dt_probe_tcp_recvmsg_cache_table, cache_entry, list, curpid)
 			{
@@ -225,6 +222,7 @@ static int dt_probe_register(void)
 			goto on_err;
 		}
 	}
+
 	return 0;
 
 on_err:
@@ -275,9 +273,12 @@ static ssize_t dt_probe_probe_store(struct kobject* obj, struct kobj_attribute* 
 	return size;
 }
 
-struct kobj_attribute dt_probe_probe_attr = __ATTR(probe, 0664, dt_probe_probe_show, dt_probe_probe_store);
+static struct kobj_attribute dt_probe_probe_attr = __ATTR(probe, 0664, dt_probe_probe_show, dt_probe_probe_store);
+static struct dt_sysfs_attr dt_probe_probe_sysfs_attr = {
+	.attr = &dt_probe_probe_attr
+};
 
-int dt_probe_init(void)
+int dt_probe_init(struct hlist_head* attrs)
 {
 	spin_lock_init(&dt_probe_tcp_recvmsg_cache_table_lock);
 	hash_init(dt_probe_tcp_recvmsg_cache_table);
@@ -299,7 +300,9 @@ int dt_probe_init(void)
 		printk(DT_PRINTK_ERR "Could not create dt_probe_mark_alloc");
 		return -1;
 	}
-	printk(DT_PRINTK_INFO "==================================================================");
+
+	hlist_add_head(&dt_probe_probe_sysfs_attr.list, attrs);
+
 	return 0;
 }
 
