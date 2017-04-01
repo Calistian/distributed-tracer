@@ -50,6 +50,7 @@ struct dt_probe_tcp_recvmsg_cache_entry
 {
 	pid_t pid;
 	bool marked;
+	struct sock* sk;
 	struct hlist_node list;
 };
 
@@ -75,6 +76,8 @@ static int ip_queue_xmit_jprobe_fn(struct sock* sk, struct sk_buff* skb, struct 
 			// Flip the first reserved bit in the TCP header and update checksum accordingly
 			th->res1 |= (1 << 3);
 			th->check ^= (1 << 3);
+
+			dt_proc_unref_current((uint64_t)sk);
 		}
 	}
 
@@ -115,6 +118,7 @@ static int tcp_recvmsg_kretprobe_entry_fn(struct kretprobe_instance* inst, struc
 	entry = kmem_cache_alloc(dt_probe_tcp_recvmsg_cache_alloc, GFP_KERNEL);
 	entry->pid = current->pid;
 	entry->marked = false;
+	entry->sk = (struct sock*)regs->di;
 
 	spin_lock(&dt_probe_tcp_recvmsg_cache_table_lock);
 	hash_add(dt_probe_tcp_recvmsg_cache_table, &entry->list, entry->pid);
@@ -136,7 +140,7 @@ static int tcp_recvmsg_kretprobe_fn(struct kretprobe_instance* inst, struct pt_r
 		{
 			if(entry->marked)
 			{
-				printk(DT_PRINTK_INFO "Found marked packet for %d", curpid);
+				dt_proc_ref_current((uint64_t)entry->sk);
 			}
 			hash_del(&entry->list);
 			kmem_cache_free(dt_probe_tcp_recvmsg_cache_alloc, entry);

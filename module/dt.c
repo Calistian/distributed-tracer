@@ -16,22 +16,22 @@ MODULE_VERSION("alpha");
 static int __init dt_init(void)
 {
 	int ret = 0;
-	struct hlist_head sysfs = HLIST_HEAD_INIT;
+	struct hlist_head sysfs_attrs = HLIST_HEAD_INIT;
 
-	ret = dt_proc_init(&sysfs);
+	ret = dt_proc_init(&sysfs_attrs);
 	if(ret < 0)
 	{
 		printk(DT_PRINTK_ERR "Could not initialize pid");
 		return ret;
 	}
-	ret = dt_probe_init(&sysfs);
+	ret = dt_probe_init(&sysfs_attrs);
 	if(ret < 0)
 	{
 		dt_proc_exit();
 		printk(DT_PRINTK_ERR "Could not initialize probe");
 		return ret;
 	}
-	ret = dt_sysfs_init(DT_MODULE_NAME, &sysfs);
+	ret = dt_sysfs_init(DT_MODULE_NAME, &sysfs_attrs);
 	if(ret < 0)
 	{
 		dt_probe_exit();

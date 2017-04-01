@@ -63,10 +63,11 @@ static int dt_proc_ref_do(struct task_struct* task, uint64_t tag)
 	int ret;
 
 	read_lock(&dt_proc_table_lock);
-	entry = __dt_proc_get_entry(task, tag, true);
+	entry = __dt_proc_get_entry(task, tag, false);
 	if(entry)
 	{
-		atomic_inc(&entry->refcount);
+		if(entry->tag == tag)
+			atomic_inc(&entry->refcount);
 		ret = atomic_read(&entry->refcount);
 	}
 	read_unlock(&dt_proc_table_lock);
@@ -89,12 +90,15 @@ static int dt_proc_unref_do(struct task_struct* task, uint64_t tag)
 
 	write_lock(&dt_proc_table_lock);
 	entry = __dt_proc_get_entry(task, tag, true);
-	atomic_dec(&entry->refcount);
-	ret = atomic_read(&entry->refcount);
-	if (ret == 0)
+	if(entry)
 	{
-		hash_del(&entry->list);
-		kmem_cache_free(dt_proc_entry_alloc, entry);
+		atomic_dec(&entry->refcount);
+		ret = atomic_read(&entry->refcount);
+		if (ret == 0)
+		{
+			hash_del(&entry->list);
+			kmem_cache_free(dt_proc_entry_alloc, entry);
+		}
 	}
 	write_unlock(&dt_proc_table_lock);
 
