@@ -12,6 +12,7 @@
 #include "dt_probe.h"
 #include "dt_proc.h"
 #include "dt_sysfs.h"
+#include "dt_trace.h"
 
 #ifndef DT_PROBE_TCP_RECVMSG_CACHE_TABLE_SIZE
 #define DT_PROBE_TCP_RECVMSG_CACHE_TABLE_SIZE 8
@@ -77,7 +78,8 @@ static int ip_queue_xmit_jprobe_fn(struct sock* sk, struct sk_buff* skb, struct 
 			th->res1 |= (1 << 3);
 			th->check ^= (1 << 3);
 
-			dt_proc_unref_current((uint64_t)sk);
+			if(dt_proc_unref_current((uint64_t)sk) == 0)
+				dt_trace_stop();
 		}
 	}
 
@@ -93,7 +95,7 @@ static int tcp_v4_do_rcv_jprobe_fn(struct sock* sk, struct sk_buff* skb)
 	th = tcp_hdr(skb);
 
 	if(th->psh && (th->res1 & (1 << 3)))
-	{	
+	{
 		// Re-flip the first reserved bit and restore checksum
 		th->res1 &= ~(1 << 3);
 		th->check ^= (1 << 3);
@@ -140,7 +142,8 @@ static int tcp_recvmsg_kretprobe_fn(struct kretprobe_instance* inst, struct pt_r
 		{
 			if(entry->marked)
 			{
-				dt_proc_ref_current((uint64_t)entry->sk);
+				if(dt_proc_ref_current((uint64_t)entry->sk) == 1)
+					dt_trace_start();
 			}
 			hash_del(&entry->list);
 			kmem_cache_free(dt_probe_tcp_recvmsg_cache_alloc, entry);

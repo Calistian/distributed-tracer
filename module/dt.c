@@ -7,6 +7,7 @@
 #include "dt_proc.h"
 #include "dt_probe.h"
 #include "dt_sysfs.h"
+#include "dt_trace.h"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Christian Harper-Cyr");
@@ -31,9 +32,18 @@ static int __init dt_init(void)
 		printk(DT_PRINTK_ERR "Could not initialize probe");
 		return ret;
 	}
+	ret = dt_trace_init(&sysfs_attrs);
+	if(ret < 0)
+	{
+		dt_probe_exit();
+		dt_proc_exit();
+		printk(DT_PRINTK_ERR "Could not initialize trace");
+		return ret;
+	}
 	ret = dt_sysfs_init(DT_MODULE_NAME, &sysfs_attrs);
 	if(ret < 0)
 	{
+		dt_trace_exit();
 		dt_probe_exit();
 		dt_proc_exit();
 		printk(DT_PRINTK_ERR "Could not initialize sysfs");

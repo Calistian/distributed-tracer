@@ -6,7 +6,7 @@
 
 static struct kobject* dt_sysfs_obj;
 
-size_t list_size(struct hlist_head* list)
+static size_t list_size(struct hlist_head* list)
 {
 	struct hlist_node* entry;
 	size_t size = 0;
