@@ -67,8 +67,12 @@ static int dt_proc_ref_do(struct task_struct* task, uint64_t tag)
 	if(entry)
 	{
 		if(entry->tag == tag)
+		{
 			atomic_inc(&entry->refcount);
-		ret = atomic_read(&entry->refcount);
+			ret = atomic_read(&entry->refcount);
+		}
+		else
+			ret = 0;
 	}
 	read_unlock(&dt_proc_table_lock);
 

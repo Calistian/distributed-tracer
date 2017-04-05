@@ -22,13 +22,13 @@ static struct dt_sysfs_attr dt_trace_trace_sysfs_attr = {
 
 int dt_trace_start(void)
 {
-	atomic_set(&dt_trace_active, 1);
+	atomic_inc(&dt_trace_active);
 	return 0;
 }
 
 int dt_trace_stop(void)
 {
-	atomic_set(&dt_trace_active, 0);
+	atomic_add_unless(&dt_trace_active, -1, 0);
 	return 0;
 }
 
