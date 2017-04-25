@@ -26,7 +26,7 @@ The marking is done by setting the first Reserved bit in the TCP header. Routers
 # Interface
 
 ## User Interface
-To control this module, it exposes a set of sysfs files, under the /sys/distributed-tracer directory.
+To control this module, it exposes a set of sysfs files, under the `/sys/distributed-tracer` directory.
 - `add_pid` : This write-only file is used to add a PID to the enabled threads. This is the file that is used to manually set the traced threads.
 - `remove_pid` : This write-only file removes a PID from the enabled threads.
 - `list_pid` : This read-only file lists all the currently flagged PIDs, manually or automatically.
