@@ -90,7 +90,7 @@ static int dt_proc_ref_do(struct task_struct* task, uint64_t tag)
 static int dt_proc_unref_do(struct task_struct* task, uint64_t tag)
 {
 	struct dt_proc_entry* entry;
-	int ret;
+	int ret = 0;
 
 	write_lock(&dt_proc_table_lock);
 	entry = __dt_proc_get_entry(task, tag, true);

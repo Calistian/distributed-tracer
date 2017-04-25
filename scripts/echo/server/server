@@ -1,0 +1,22 @@
+#!/bin/bash
+
+CUR_DIR=$(dirname $0)
+DT_DIR=$(realpath $CUR_DIR/../../..)
+
+sudo modprobe -r distributed_tracer
+sudo modprobe distributed_tracer
+sudo python3 $DT_DIR/controller/distributed-tracer.py probe set
+
+sudo pkill lttng
+sudo lttng create -o test
+sudo lttng enable-event -k -a
+sudo lttng start
+
+python3 $CUR_DIR/server.py $@
+
+sudo lttng stop
+sudo pkill lttng
+
+sudo chown -R $USER.$USER test
+
+sudo modprobe -r distributed_tracer
