@@ -31,6 +31,7 @@ To control this module, it exposes a set of sysfs files, under the `/sys/distrib
 - `remove_pid` : This write-only file removes a PID from the enabled threads.
 - `list_pid` : This read-only file lists all the currently flagged PIDs, manually or automatically.
 - `probe` : This read-write file is used to activate/deactivate the module. Write 1 to activate, 0 to deactivate. Reading it will return the current status.
+- `trace` : This read-only file will return the status of the tracing. 1 is activated, 0 is not.
 
 ## Kernel Interface
 The module exposes a boolean variable named `dt_trace_active` of type `atomic_t`. It is set when the tracing is supposed to be active.
