@@ -76,7 +76,7 @@ static int ip_queue_xmit_jprobe_fn(struct sock* sk, struct sk_buff* skb, struct 
 		{
 			// Flip the first reserved bit in the TCP header and update checksum accordingly
 			th->res1 |= (1 << 3);
-			th->check ^= (1 << 3);
+			th->check ^= (1 << 2);
 
 			if(dt_proc_unref_current((uint64_t)sk) == 0)
 				dt_trace_stop();
@@ -98,7 +98,7 @@ static int tcp_v4_do_rcv_jprobe_fn(struct sock* sk, struct sk_buff* skb)
 	{
 		// Re-flip the first reserved bit and restore checksum
 		th->res1 &= ~(1 << 3);
-		th->check ^= (1 << 3);
+		th->check ^= (1 << 2);
 
 		entry = kmem_cache_alloc(dt_probe_mark_alloc, GFP_KERNEL);
 		entry->skb = skb;
