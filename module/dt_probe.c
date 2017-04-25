@@ -67,6 +67,7 @@ struct dt_probe_mark_entry
 static int ip_queue_xmit_jprobe_fn(struct sock* sk, struct sk_buff* skb, struct flowi* fl)
 {
 	struct tcphdr* th;
+	struct inet_sock* inet;
 
 	// Do something only if the calling PID is being watched and the packet is TCP. Only mark data packets (PSH)
 	if(sk->sk_type == SOCK_STREAM && dt_proc_has_current())
@@ -74,9 +75,15 @@ static int ip_queue_xmit_jprobe_fn(struct sock* sk, struct sk_buff* skb, struct 
 		th = tcp_hdr(skb);
 		if(th->psh)
 		{
-			// Flip the first reserved bit in the TCP header and update checksum accordingly
+			inet = inet_sk(sk);
+			printk(DT_PRINTK_INFO "From %x %x\n", th->res1, th->check);
+
+			// Flip the first reserved bit in the TCP header and update checksum
 			th->res1 |= (1 << 3);
-			th->check ^= (1 << 2);
+			th->check = 0;
+			tcp_v4_send_check(sk, skb);
+
+			printk(DT_PRINTK_INFO "To %x %x\n", th->res1, th->check);
 
 			if(dt_proc_unref_current((uint64_t)sk) == 0)
 				dt_trace_stop();
@@ -90,15 +97,19 @@ static int ip_queue_xmit_jprobe_fn(struct sock* sk, struct sk_buff* skb, struct 
 static int tcp_v4_do_rcv_jprobe_fn(struct sock* sk, struct sk_buff* skb)
 {
 	struct tcphdr* th;
+	struct inet_sock* inet;
 	struct dt_probe_mark_entry* entry;
 	
 	th = tcp_hdr(skb);
 
 	if(th->psh && (th->res1 & (1 << 3)))
 	{
+		inet = inet_sk(sk);
+
 		// Re-flip the first reserved bit and restore checksum
 		th->res1 &= ~(1 << 3);
-		th->check ^= (1 << 2);
+		th->check = 0;
+		tcp_v4_send_check(sk, skb);
 
 		entry = kmem_cache_alloc(dt_probe_mark_alloc, GFP_KERNEL);
 		entry->skb = skb;
