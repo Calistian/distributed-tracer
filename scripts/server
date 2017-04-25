@@ -1,7 +1,7 @@
 #!/bin/bash
 
 CUR_DIR=$(dirname $0)
-DT_DIR=$(realpath $CUR_DIR/../../..)
+DT_DIR=$(realpath $CUR_DIR/..)
 
 sudo modprobe -r distributed_tracer
 sudo modprobe distributed_tracer
@@ -12,7 +12,7 @@ sudo lttng create -o test
 sudo lttng enable-event -k -a
 sudo lttng start
 
-python3 $CUR_DIR/middle.py $@
+python3 $CUR_DIR/echo/server/server.py $@
 
 sudo lttng stop
 sudo pkill lttng

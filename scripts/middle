@@ -12,7 +12,7 @@ sudo lttng create -o test
 sudo lttng enable-event -k -a
 sudo lttng start
 
-python3 $CUR_DIR/server.py $@
+python3 $CUR_DIR/echo/middle/middle.py $@
 
 sudo lttng stop
 sudo pkill lttng
